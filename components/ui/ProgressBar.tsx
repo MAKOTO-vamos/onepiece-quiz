@@ -1,14 +1,13 @@
 interface ProgressBarProps {
-  percentage: number;
-  colorClass?: string;
+  progress: number;
 }
 
-export default function ProgressBar({ percentage, colorClass = 'bg-blue-600' }: ProgressBarProps) {
+export default function ProgressBar({ progress }: ProgressBarProps) {
   return (
-    <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+    <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
       <div
-        className={`h-full ${colorClass} transition-all duration-500 ease-out`}
-        style={{ width: `${Math.min(100, Math.max(0, percentage))}%` }}
+        className="bg-gradient-to-r from-[#3498DB] to-[#2ECC71] h-full transition-all duration-500 ease-out"
+        style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
       />
     </div>
   );
