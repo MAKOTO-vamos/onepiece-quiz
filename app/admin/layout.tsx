@@ -13,7 +13,8 @@ export default function AdminLayout({
   const menuItems = [
     { href: '/admin', label: 'ダッシュボード', icon: '📊' },
     { href: '/admin/import', label: '問題インポート', icon: '📥' },
-    { href: '/admin/edit', label: '問題編集', icon: '✏️' },
+    { href: '/admin/questions', label: '問題編集', icon: '✏️' },
+    { href: '/admin/arc-settings', label: 'エリア設定', icon: '🗺️' },
     { href: '/', label: 'トップに戻る', icon: '🏠' },
   ];
 

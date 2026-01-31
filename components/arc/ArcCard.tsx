@@ -39,7 +39,7 @@ export default function ArcCard({ arc, progress }: ArcCardProps) {
   const handleClick = () => {
     if (!isLocked) {
       // アンロック済みのエリアをクリックしたらクイズ画面へ
-      router.push(`/quiz/${arc.id}`);
+      router.push(`/quiz/${arc.id}/mode-select`);
     }
   };
 
