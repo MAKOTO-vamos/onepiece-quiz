@@ -131,7 +131,7 @@ export default function OrderingQuiz({
     const result = checkOrderingAnswer(
       currentOrder,
       question.choices,
-      question.format_config.partial_scoring || false,
+      question.format_config?.partial_scoring || false,
       question.points
     );
 
@@ -231,9 +231,11 @@ export default function OrderingQuiz({
         <p className="text-xl font-bold text-[#2C3E50] mb-2">
           {question.question_text}
         </p>
-        <p className="text-sm text-gray-600">
-          （{question.format_config.ordering_criteria}）
-        </p>
+        {question.format_config?.ordering_criteria && (
+          <p className="text-sm text-gray-600">
+            （{question.format_config.ordering_criteria}）
+          </p>
+        )}
       </div>
 
       {/* 画像表示（もしあれば） */}
@@ -390,7 +392,7 @@ export default function OrderingQuiz({
             <div className={`text-3xl font-extrabold ${isCorrect ? 'text-green-900' : 'text-red-900'}`}>
               {score}pt
             </div>
-            {!isCorrect && question.format_config.partial_scoring && score > 0 && (
+            {!isCorrect && question.format_config?.partial_scoring && score > 0 && (
               <div className="text-sm mt-2 text-gray-900 font-medium">
                 部分点が加算されました
               </div>

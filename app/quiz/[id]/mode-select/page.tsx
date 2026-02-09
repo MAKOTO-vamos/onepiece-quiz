@@ -16,6 +16,13 @@ interface StoryArc {
   emoji: string;
 }
 
+interface NextArcInfo {
+  id: number;
+  display_name: string;
+  promotion_exam_question_count: number;
+  promotion_exam_pass_rate: number;
+}
+
 const STORY_ARCS: StoryArc[] = [
   { id: -1, name: '全体', emoji: '🌍' },
   { id: 0, name: '未分類', emoji: '❓' },
@@ -42,12 +49,33 @@ export default function ModeSelectPage() {
   const arcId = parseInt(params.id as string);
   const [arc, setArc] = useState<StoryArc | null>(null);
   const [totalQuestions, setTotalQuestions] = useState(0);
+  const [nextArcInfo, setNextArcInfo] = useState<NextArcInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       const selectedArc = STORY_ARCS.find(a => a.id === arcId);
       setArc(selectedArc || null);
+
+      // 現在のエリアの順番を取得
+      const { data: currentArc } = await supabase
+        .from('story_arcs')
+        .select('order_num')
+        .eq('id', arcId)
+        .single();
+
+      if (currentArc) {
+        // 次のエリアの昇格試験設定を取得
+        const { data: nextArc } = await supabase
+          .from('story_arcs')
+          .select('id, display_name, promotion_exam_question_count, promotion_exam_pass_rate')
+          .eq('order_num', currentArc.order_num + 1)
+          .single();
+
+        if (nextArc) {
+          setNextArcInfo(nextArc);
+        }
+      }
 
       // 問題数を取得
       const { count } = await supabase
@@ -103,28 +131,63 @@ export default function ModeSelectPage() {
         {/* モード選択 */}
         <div className="space-y-4">
           {/* 昇格試験 */}
-          <div
-            onClick={() => router.push(`/quiz/${arcId}/exam`)}
-            className="
-              p-6 bg-gradient-to-r from-[#B22222] to-red-700
-              rounded-lg border-4 border-[#8B0000]
-              cursor-pointer hover:scale-105 transition-transform
-              shadow-lg
-            "
-          >
-            <div className="flex items-center gap-4">
-              <div className="text-6xl">👑</div>
-              <div className="flex-1">
-                <h2 className="text-2xl font-bold text-white mb-1">
-                  昇格試験
-                </h2>
-                <p className="text-red-100 text-sm">
-                  全問正解で次のステージが開放されます
-                </p>
+          {nextArcInfo ? (
+            <div
+              onClick={() => router.push(`/promotion-exam/${nextArcInfo.id}/${arcId}`)}
+              className="
+                p-6 bg-gradient-to-r from-[#B22222] to-red-700
+                rounded-lg border-4 border-[#8B0000]
+                cursor-pointer hover:scale-105 transition-transform
+                shadow-lg
+              "
+            >
+              <div className="flex items-center gap-4">
+                <div className="text-6xl">🎓</div>
+                <div className="flex-1">
+                  <h2 className="text-2xl font-bold text-white mb-1">
+                    昇格試験
+                  </h2>
+                  <div className="bg-white bg-opacity-20 rounded-lg px-3 py-1 mb-2 inline-block">
+                    <p className="text-white font-bold text-sm">
+                      {nextArcInfo.display_name}の解放試験
+                    </p>
+                  </div>
+                  <p className="text-red-100 text-sm mb-1">
+                    📝 {nextArcInfo.promotion_exam_question_count}問出題
+                  </p>
+                  <p className="text-red-100 text-sm mb-1">
+                    ✅ {nextArcInfo.promotion_exam_pass_rate}%以上で合格
+                  </p>
+                  <p className="text-red-100 text-xs">
+                    {nextArcInfo.promotion_exam_question_count}問中{' '}
+                    {Math.ceil((nextArcInfo.promotion_exam_question_count * nextArcInfo.promotion_exam_pass_rate) / 100)}問
+                    正解で次のエリアが開放されます
+                  </p>
+                </div>
+                <div className="text-white text-4xl">→</div>
               </div>
-              <div className="text-white text-4xl">→</div>
             </div>
-          </div>
+          ) : (
+            <div
+              className="
+                p-6 bg-gradient-to-r from-gray-400 to-gray-600
+                rounded-lg border-4 border-gray-700
+                opacity-60
+              "
+            >
+              <div className="flex items-center gap-4">
+                <div className="text-6xl">🎓</div>
+                <div className="flex-1">
+                  <h2 className="text-2xl font-bold text-white mb-1">
+                    昇格試験
+                  </h2>
+                  <p className="text-gray-200 text-sm">
+                    このエリアには昇格試験がありません
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 練習モード */}
           <div
@@ -155,7 +218,12 @@ export default function ModeSelectPage() {
         <div className="mt-8 p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
           <h3 className="font-bold text-yellow-900 mb-2">💡 モードについて</h3>
           <ul className="text-sm text-yellow-800 space-y-1">
-            <li>• <strong>昇格試験</strong>: 全問出題、全問正解で次のエリアが開放</li>
+            {nextArcInfo && (
+              <li>
+                • <strong>昇格試験</strong>: {nextArcInfo.promotion_exam_question_count}問出題、
+                {nextArcInfo.promotion_exam_pass_rate}%以上で合格
+              </li>
+            )}
             <li>• <strong>練習モード</strong>: 問題形式や問題数を自由に選択可能</li>
           </ul>
         </div>

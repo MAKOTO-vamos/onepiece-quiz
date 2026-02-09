@@ -1,6 +1,8 @@
+// app/admin/questions/page.tsx
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -93,6 +95,7 @@ function getNumericConfig(config: FormatConfig): NumericConfig | null {
 }
 
 export default function QuestionEditorAllFormats() {
+  const router = useRouter();
   const [questions, setQuestions] = useState<Question[]>([]);
   const [storyArcs, setStoryArcs] = useState<StoryArc[]>([]);
   const [filterArcId, setFilterArcId] = useState<number | null>(null);
@@ -279,9 +282,26 @@ export default function QuestionEditorAllFormats() {
   return (
     <div className="min-h-screen bg-[#FDF6E3] p-8">
       <div className="max-w-6xl mx-auto">
-        <h1 className="text-4xl font-bold text-[#2C3E50] mb-8">
-          📝 問題編集（全形式対応）
-        </h1>
+        {/* ヘッダー */}
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <button
+              onClick={() => router.push('/admin')}
+              className="mb-4 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded"
+            >
+              ← 管理画面トップ
+            </button>
+            <h1 className="text-4xl font-bold text-[#2C3E50]">
+              📝 問題管理
+            </h1>
+          </div>
+          <button
+            onClick={() => router.push('/admin/questions/create')}
+            className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg text-lg shadow-lg hover:shadow-xl transition-all"
+          >
+            + 新規作成
+          </button>
+        </div>
 
         {/* フィルタ */}
         <div className="bg-white p-6 rounded-lg shadow-lg border-4 border-[#2C3E50] mb-6 space-y-4">

@@ -38,6 +38,8 @@ interface StoryArc {
   total_questions: number;
   require_promotion_exam: boolean;
   unlock_threshold: number;
+  promotion_exam_question_count: number;
+  promotion_exam_pass_rate: number;
 }
 
 interface UserProgress {
@@ -45,11 +47,14 @@ interface UserProgress {
   completion_rate: number;
   stars: number;
   is_unlocked: boolean;
+  correct_answers: number;
+  total_questions: number;
 }
 
 interface ArcWithExamStatus extends StoryArc {
   progress?: UserProgress;
   can_take_exam: boolean;
+  should_auto_unlock: boolean;
   prev_completion_rate: number;
 }
 
@@ -77,7 +82,9 @@ export default function HomePage() {
           name,
           order_num,
           require_promotion_exam,
-          unlock_threshold
+          unlock_threshold,
+          promotion_exam_question_count,
+          promotion_exam_pass_rate
         `)
         .order('order_num');
 
@@ -112,9 +119,70 @@ export default function HomePage() {
         return;
       }
 
-      // 昇格試験の受験可否を判定
+      // 各エリアの進捗率を回答履歴から計算
+      const progressWithCalculatedRates = await Promise.all(
+        arcsWithQuestionCount.map(async (arc) => {
+          // そのエリアの全問題IDを取得
+          const { data: questions } = await supabase
+            .from('questions')
+            .select('id')
+            .eq('story_arc_id', arc.id);
+
+          const questionIds = questions?.map(q => q.id) || [];
+          
+          if (questionIds.length === 0) {
+            return {
+              story_arc_id: arc.id,
+              completion_rate: 0,
+              correct_count: 0,
+              total_count: 0,
+            };
+          }
+
+          // 各問題の最新の回答を取得
+          const { data: latestAnswers } = await supabase
+            .from('answer_history')
+            .select('question_id, is_correct, answered_at')
+            .eq('user_id', user.id)
+            .in('question_id', questionIds)
+            .order('answered_at', { ascending: false });
+
+          // 各問題の最新の回答のみを抽出
+          const latestAnswersByQuestion = new Map<number, boolean>();
+          latestAnswers?.forEach(answer => {
+            if (!latestAnswersByQuestion.has(answer.question_id)) {
+              latestAnswersByQuestion.set(answer.question_id, answer.is_correct);
+            }
+          });
+
+          // 正解数をカウント
+          const correctCount = Array.from(latestAnswersByQuestion.values())
+            .filter(isCorrect => isCorrect).length;
+
+          // 進捗率を計算
+          const completionRate = questionIds.length > 0
+            ? Math.round((correctCount / questionIds.length) * 100)
+            : 0;
+
+          console.log(`📊 Arc ${arc.id} (${arc.name}):`, {
+            total: questionIds.length,
+            correct: correctCount,
+            rate: completionRate
+          });
+
+          return {
+            story_arc_id: arc.id,
+            completion_rate: completionRate,
+            correct_count: correctCount,
+            total_count: questionIds.length,
+          };
+        })
+      );
+
+      // 昇格試験の受験可否と自動解放を判定
       const arcsWithExamStatus: ArcWithExamStatus[] = arcsWithQuestionCount.map((arc, index) => {
         const arcProgress = progressData?.find(p => p.story_arc_id === arc.id);
+        const calculatedProgress = progressWithCalculatedRates.find(p => p.story_arc_id === arc.id);
         
         // 前のエリアを取得
         const prevArc = index > 0 ? arcsWithQuestionCount[index - 1] : null;
@@ -122,35 +190,101 @@ export default function HomePage() {
           ? progressData?.find(p => p.story_arc_id === prevArc.id) 
           : null;
 
+        const prevCompletionRate = prevProgress?.completion_rate ?? 0;
+        const thresholdMet = prevCompletionRate >= arc.unlock_threshold;
+
         // 昇格試験を受けられるか判定
         const can_take_exam = 
-          !arcProgress?.is_unlocked &&                          // まだ解放されていない
-          prevArc != null &&                                    // 前のエリアが存在する
-          arc.require_promotion_exam &&                         // 昇格試験が必要
-          prevProgress != null &&                               // 前のエリアの進捗がある
-          prevProgress.completion_rate >= arc.unlock_threshold; // 必要進捗率を達成
+          !arcProgress?.is_unlocked &&                // まだ解放されていない
+          prevArc != null &&                          // 前のエリアが存在する
+          arc.require_promotion_exam;                 // 昇格試験が必要（進捗率は不要）
+
+        // 自動解放すべきか判定
+        const should_auto_unlock =
+          !arcProgress?.is_unlocked &&                // まだ解放されていない
+          prevArc != null &&                          // 前のエリアが存在する
+          !arc.require_promotion_exam;                // 昇格試験が不要（進捗率は無関係）
+
+        // デバッグログ
+        if (arc.id <= 5) {
+          console.log(`🔍 ${arc.name}:`, {
+            isUnlocked: arcProgress?.is_unlocked ?? false,
+            requireExam: arc.require_promotion_exam,
+            examQuestions: arc.promotion_exam_question_count,
+            examPassRate: arc.promotion_exam_pass_rate,
+            prevCompletionRate,
+            threshold: arc.unlock_threshold,
+            thresholdMet,
+            can_take_exam,
+            should_auto_unlock,
+          });
+        }
 
         return {
           ...arc,
-          progress: arcProgress,
+          progress: arcProgress ? {
+            ...arcProgress,
+            completion_rate: calculatedProgress?.completion_rate ?? arcProgress.completion_rate,
+          } : undefined,
           can_take_exam,
-          prev_completion_rate: prevProgress?.completion_rate ?? 0,
+          should_auto_unlock,
+          prev_completion_rate: prevCompletionRate,
         };
       });
 
-      setArcs(arcsWithExamStatus);
-      
-      // デバッグ: 進捗データを確認
-      console.log('Progress data:', progressData);
-      console.log('Arcs with exam status:', arcsWithExamStatus);
-      
-      // 全体進捗を計算（未分類と全体エリアを除く）
-      const mainArcs = arcsWithExamStatus.filter(arc => arc.id !== 0 && arc.id !== -1);
-      const totalCompletion = mainArcs.reduce((sum, arc) => {
-        return sum + (arc.progress?.completion_rate || 0);
-      }, 0);
-      const avgCompletion = mainArcs.length > 0 ? Math.round(totalCompletion / mainArcs.length) : 0;
-      setOverallProgress(avgCompletion);
+      // 自動解放処理
+      for (const arc of arcsWithExamStatus) {
+        if (arc.should_auto_unlock) {
+          console.log(`🔓 Auto-unlocking: ${arc.name}`);
+          await supabase
+            .from('user_progress')
+            .update({
+              is_unlocked: true,
+              unlocked_at: new Date().toISOString(),
+            })
+            .eq('user_id', user.id)
+            .eq('story_arc_id', arc.id);
+        }
+      }
+
+      // 自動解放した場合は再読み込み
+      if (arcsWithExamStatus.some(arc => arc.should_auto_unlock)) {
+        // 再度データを取得
+        const { data: updatedProgressData } = await supabase
+          .from('user_progress')
+          .select('*')
+          .eq('user_id', user.id);
+
+        // 更新されたデータで再構築
+        const updatedArcsWithExamStatus = arcsWithExamStatus.map(arc => {
+          const updatedProgress = updatedProgressData?.find(p => p.story_arc_id === arc.id);
+          return {
+            ...arc,
+            progress: updatedProgress,
+            should_auto_unlock: false, // 既に解放済み
+          };
+        });
+
+        setArcs(updatedArcsWithExamStatus);
+
+        // 全体進捗を計算
+        const mainArcs = updatedArcsWithExamStatus.filter(arc => arc.id !== 0 && arc.id !== -1);
+        const totalCompletion = mainArcs.reduce((sum, arc) => {
+          return sum + (arc.progress?.completion_rate || 0);
+        }, 0);
+        const avgCompletion = mainArcs.length > 0 ? Math.round(totalCompletion / mainArcs.length) : 0;
+        setOverallProgress(avgCompletion);
+      } else {
+        setArcs(arcsWithExamStatus);
+
+        // 全体進捗を計算
+        const mainArcs = arcsWithExamStatus.filter(arc => arc.id !== 0 && arc.id !== -1);
+        const totalCompletion = mainArcs.reduce((sum, arc) => {
+          return sum + (arc.progress?.completion_rate || 0);
+        }, 0);
+        const avgCompletion = mainArcs.length > 0 ? Math.round(totalCompletion / mainArcs.length) : 0;
+        setOverallProgress(avgCompletion);
+      }
       
       setLoading(false);
     };
@@ -169,6 +303,19 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#FDF6E3] p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
+        {/* ログアウトボタン */}
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={async () => {
+              await supabase.auth.signOut();
+              router.push('/login');
+            }}
+            className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition-colors"
+          >
+            🚪 ログアウト
+          </button>
+        </div>
+
         {/* ヘッダー */}
         <div className="text-center mb-8">
           <div className="text-8xl mb-4">🏴‍☠️</div>
@@ -258,25 +405,22 @@ export default function HomePage() {
                       transition-all shadow-lg
                     `}
                   >
-                    {/* ロック中（昇格試験も受けられない） */}
-                    {!isUnlocked && !arc.can_take_exam && (
-                      <div className="text-center mb-2">
-                        <span className="text-5xl">🔒</span>
-                        <p className="text-sm text-white mt-1 font-bold">
-                          前のエリアで{arc.unlock_threshold}%達成が必要
-                        </p>
-                        <p className="text-xs text-white mt-1">
-                          現在: {arc.prev_completion_rate.toFixed(0)}%
-                        </p>
-                      </div>
-                    )}
-
                     {/* 昇格試験受験可能 */}
                     {!isUnlocked && arc.can_take_exam && (
                       <div className="text-center mb-2">
                         <span className="text-5xl">🎓</span>
                         <p className="text-sm text-white mt-1 font-bold">
-                          昇格試験を受けられます！
+                          前のエリアで昇格試験を受けよう！
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 昇格試験OFFだがまだ解放されていない */}
+                    {!isUnlocked && !arc.can_take_exam && (
+                      <div className="text-center mb-2">
+                        <span className="text-5xl">⏳</span>
+                        <p className="text-sm text-white mt-1 font-bold">
+                          もうすぐ解放されます...
                         </p>
                       </div>
                     )}
@@ -302,7 +446,7 @@ export default function HomePage() {
                         <div className="mb-3">
                           <div className="flex justify-between items-center mb-1">
                             <span className="text-xs text-white font-bold">達成度</span>
-                            <span className="text-xs text-white font-bold">{completionRate}%</span>
+                            <span className="text-xs text-white font-bold">{completionRate.toFixed(0)}%</span>
                           </div>
                           <div className="w-full bg-white bg-opacity-30 rounded-full h-4 border-2 border-white overflow-hidden">
                             <div
@@ -335,29 +479,6 @@ export default function HomePage() {
                           🎮 クイズを始める
                         </button>
                       </>
-                    )}
-
-                    {/* 昇格試験ボタン */}
-                    {!isUnlocked && arc.can_take_exam && (
-                      <div>
-                        <button
-                          onClick={() => {
-                            // 前のエリアのIDを計算
-                            const prevArcId = arcs.find(a => a.order_num === arc.order_num - 1)?.id;
-                            if (prevArcId) {
-                              router.push(`/promotion-exam/${arc.id}/${prevArcId}`);
-                            }
-                          }}
-                          className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-4 rounded-lg transition-colors border-2 border-white mb-2"
-                        >
-                          🎓 昇格試験を受ける
-                        </button>
-                        <div className="bg-white bg-opacity-20 border-2 border-white rounded-lg p-2">
-                          <p className="text-xs text-white text-center font-bold">
-                            前エリア進捗: {arc.prev_completion_rate.toFixed(0)}% / {arc.unlock_threshold}%
-                          </p>
-                        </div>
-                      </div>
                     )}
                   </div>
                 );

@@ -1,3 +1,4 @@
+// app/quiz/[id]/play/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -43,6 +44,7 @@ export default function QuizPage() {
   const mode = searchParams.get('mode') || 'practice';
   const format = searchParams.get('format') || 'all';
   const count = parseInt(searchParams.get('count') || '0');
+  const filter = searchParams.get('filter'); // 'unanswered' or 'wrong'
   const router = useRouter();
   const arcId = parseInt(params.id as string);
 
@@ -75,7 +77,7 @@ export default function QuizPage() {
     fetchUser();
   }, []);
 
-  // 初回ロード時に全問題を取得（useEffectを修正）
+  // 初回ロード時に全問題を取得
   useEffect(() => {
   const fetchAllQuestions = async () => {
     setLoading(true);
@@ -119,11 +121,58 @@ export default function QuizPage() {
       return;
     }
 
+    let filteredQuestions = questions;
+
+    // 未回答・誤答フィルター
+    if (filter === 'unanswered' || filter === 'wrong') {
+      if (!userId) {
+        setLoading(false);
+        return;
+      }
+
+      const questionIds = questions.map(q => q.id);
+
+      // 各問題の最新の回答を取得
+      const { data: latestAnswers } = await supabase
+        .from('answer_history')
+        .select('question_id, is_correct, answered_at')
+        .eq('user_id', userId)
+        .in('question_id', questionIds)
+        .order('answered_at', { ascending: false });
+
+      // 各問題の最新の回答のみを抽出
+      const latestAnswersByQuestion = new Map<number, boolean>();
+      latestAnswers?.forEach(answer => {
+        if (!latestAnswersByQuestion.has(answer.question_id)) {
+          latestAnswersByQuestion.set(answer.question_id, answer.is_correct);
+        }
+      });
+
+      if (filter === 'unanswered') {
+        // 未回答の問題のみ
+        filteredQuestions = questions.filter(q => !latestAnswersByQuestion.has(q.id));
+        console.log('📝 Unanswered questions:', filteredQuestions.length);
+      } else if (filter === 'wrong') {
+        // 誤答の問題のみ（最新の回答が不正解）
+        filteredQuestions = questions.filter(q => {
+          const isCorrect = latestAnswersByQuestion.get(q.id);
+          return isCorrect === false; // 明示的にfalseの場合のみ
+        });
+        console.log('❌ Wrong questions:', filteredQuestions.length);
+      }
+
+      if (filteredQuestions.length === 0) {
+        console.log('✅ No questions matching filter:', filter);
+        setLoading(false);
+        return;
+      }
+    }
+
     // 問題をシャッフル
-    const shuffledQuestions = [...questions].sort(() => Math.random() - 0.5);
+    const shuffledQuestions = [...filteredQuestions].sort(() => Math.random() - 0.5);
     
-    // 問題数を制限（countが指定されている場合）
-    const limitedQuestions = count > 0 
+    // 問題数を制限（countが指定されている場合、filterがない場合のみ）
+    const limitedQuestions = !filter && count > 0 
       ? shuffledQuestions.slice(0, count) 
       : shuffledQuestions;
     
@@ -149,25 +198,61 @@ export default function QuizPage() {
   };
 
   fetchAllQuestions();
-}, [arcId, format, count]); // 依存配列に format と count を追加
+}, [arcId, format, count, filter, userId]);
 
   const handleChoiceClick = (choiceId: number) => {
     if (showResult) return;
     setSelectedChoice(choiceId);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (selectedChoice === null) return;
+    
+    const selectedChoiceData = shuffledChoices.find(c => c.id === selectedChoice);
+    const isCorrect = selectedChoiceData?.is_correct || false;
+    
+    // 回答履歴を保存
+    if (userId && question) {
+      try {
+        await supabase
+          .from('answer_history')
+          .insert({
+            user_id: userId,
+            question_id: question.id,
+            is_correct: isCorrect,
+          });
+        console.log('✅ Answer saved:', { question_id: question.id, is_correct: isCorrect });
+      } catch (error) {
+        console.error('❌ Error saving answer:', error);
+      }
+    }
+    
     setShowResult(true);
   };
 
   // 複数選択問題の回答処理
-  const handleMultipleChoiceAnswer = (
+  const handleMultipleChoiceAnswer = async (
     _selectedChoiceIds: number[], 
     isCorrect: boolean
   ) => {
     if (isCorrect) {
       setCorrectAnswers(prev => prev + 1);
+    }
+    
+    // 回答履歴を保存
+    if (userId && question) {
+      try {
+        await supabase
+          .from('answer_history')
+          .insert({
+            user_id: userId,
+            question_id: question.id,
+            is_correct: isCorrect,
+          });
+        console.log('✅ Answer saved:', { question_id: question.id, is_correct: isCorrect });
+      } catch (error) {
+        console.error('❌ Error saving answer:', error);
+      }
     }
   };
 
@@ -301,7 +386,7 @@ export default function QuizPage() {
   } else {
   // 最後の問題 - 進捗を更新してから結果画面を表示
   await updateProgress(finalCorrectCount, totalQuestions, mode);
-  setShowQuizResult(true);  // ← ホームに戻らずに結果画面を表示
+  setShowQuizResult(true);
 　}
 };
 
@@ -329,11 +414,20 @@ export default function QuizPage() {
     }
 
   if (!question) {
+    const getMessage = () => {
+      if (filter === 'unanswered') {
+        return '未回答の問題がありません。全ての問題に回答済みです！';
+      } else if (filter === 'wrong') {
+        return '誤答の問題がありません。全て正解しています！';
+      }
+      return '問題が見つかりません';
+    };
+
     return (
       <div className="min-h-screen bg-[#FDF6E3] flex items-center justify-center">
         <div className="text-center">
           <p className="text-2xl font-bold text-[#2C3E50] mb-4">
-            問題が見つかりません
+            {getMessage()}
           </p>
           <button
             onClick={() => router.push('/')}
@@ -403,9 +497,25 @@ export default function QuizPage() {
           <OrderingQuiz
             key={question.id}
             question={question as unknown as OrderingQuestion}
-            onAnswer={(isCorrect, _score) => {
+            onAnswer={async (isCorrect, _score) => {
               if (isCorrect) {
                 setCorrectAnswers(prev => prev + 1);
+              }
+              
+              // 回答履歴を保存
+              if (userId && question) {
+                try {
+                  await supabase
+                    .from('answer_history')
+                    .insert({
+                      user_id: userId,
+                      question_id: question.id,
+                      is_correct: isCorrect,
+                    });
+                  console.log('✅ Answer saved:', { question_id: question.id, is_correct: isCorrect });
+                } catch (error) {
+                  console.error('❌ Error saving answer:', error);
+                }
               }
             }}
             onNext={handleNext}
@@ -416,7 +526,6 @@ export default function QuizPage() {
   }
 
   //自由記述の場合
-  // 自由記述問題の場合
   if (question.question_format === 'free_text') {
     return (
       <div className="min-h-screen bg-[#FDF6E3] p-4 md:p-8">
@@ -441,9 +550,25 @@ export default function QuizPage() {
           <FreeTextQuiz
             key={question.id}
             question={question as unknown as FreeTextQuestion}
-            onAnswer={(isCorrect, _score) => {
+            onAnswer={async (isCorrect, _score) => {
               if (isCorrect) {
                 setCorrectAnswers(prev => prev + 1);
+              }
+              
+              // 回答履歴を保存
+              if (userId && question) {
+                try {
+                  await supabase
+                    .from('answer_history')
+                    .insert({
+                      user_id: userId,
+                      question_id: question.id,
+                      is_correct: isCorrect,
+                    });
+                  console.log('✅ Answer saved:', { question_id: question.id, is_correct: isCorrect });
+                } catch (error) {
+                  console.error('❌ Error saving answer:', error);
+                }
               }
             }}
             onNext={handleNext}
@@ -478,9 +603,25 @@ export default function QuizPage() {
           <NumericQuiz
             key={question.id}
             question={question as unknown as NumericQuestion}
-            onAnswer={(isCorrect, _score) => {
+            onAnswer={async (isCorrect, _score) => {
               if (isCorrect) {
                 setCorrectAnswers(prev => prev + 1);
+              }
+              
+              // 回答履歴を保存
+              if (userId && question) {
+                try {
+                  await supabase
+                    .from('answer_history')
+                    .insert({
+                      user_id: userId,
+                      question_id: question.id,
+                      is_correct: isCorrect,
+                    });
+                  console.log('✅ Answer saved:', { question_id: question.id, is_correct: isCorrect });
+                } catch (error) {
+                  console.error('❌ Error saving answer:', error);
+                }
               }
             }}
             onNext={handleNext}
