@@ -43,11 +43,8 @@ interface MultipleChoiceConfig {
 }
 
 interface OrderingConfig {
-  items?: Array<{
-    id: number;
-    text: string;
-    correct_position: number;
-  }>;
+  ordering_criteria?: string;
+  partial_scoring?: boolean;
 }
 
 type FormatConfig = FreeTextConfig | NumericConfig | MultipleChoiceConfig | OrderingConfig | Record<string, never>;
@@ -90,6 +87,13 @@ function getFreeTextConfig(config: FormatConfig): FreeTextConfig | null {
 function getNumericConfig(config: FormatConfig): NumericConfig | null {
   if ('correct_answer' in config) {
     return config as NumericConfig;
+  }
+  return null;
+}
+
+function getOrderingConfig(config: FormatConfig): OrderingConfig | null {
+  if ('ordering_criteria' in config || 'partial_scoring' in config) {
+    return config as OrderingConfig;
   }
   return null;
 }
@@ -138,9 +142,6 @@ export default function QuestionEditorAllFormats() {
 
     if (questionsData) {
       console.log('📊 取得した問題データ:', questionsData.length, '件');
-      console.log('📋 最初の問題:', questionsData[0]);
-      console.log('🎯 question_format:', questionsData[0]?.question_format);
-      console.log('⚙️ format_config:', questionsData[0]?.format_config);
       setQuestions(questionsData as Question[]);
     }
 
@@ -154,8 +155,6 @@ export default function QuestionEditorAllFormats() {
   // 編集開始
   const handleEdit = (question: Question) => {
     console.log('✏️ 編集開始:', question);
-    console.log('📋 question_format:', question.question_format);
-    console.log('⚙️ format_config:', question.format_config);
     setEditingQuestion({ ...question });
     setMessage('');
   };
@@ -183,7 +182,7 @@ export default function QuestionEditorAllFormats() {
 
       if (questionError) throw questionError;
 
-      // 選択肢の更新（4択・複数選択の場合）
+      // 選択肢の更新（4択・複数選択・並び替えの場合）
       if (editingQuestion.choices && editingQuestion.choices.length > 0) {
         for (const choice of editingQuestion.choices) {
           const { error: choiceError } = await supabase
@@ -191,6 +190,7 @@ export default function QuestionEditorAllFormats() {
             .update({
               choice_text: choice.choice_text,
               is_correct: choice.is_correct,
+              order_num: choice.order_num,
             })
             .eq('id', choice.id);
 
@@ -279,6 +279,42 @@ export default function QuestionEditorAllFormats() {
     });
   };
 
+  // 並び替えの選択肢を上に移動
+  const handleMoveChoiceUp = (index: number) => {
+    if (!editingQuestion || index === 0) return;
+    
+    const newChoices = [...editingQuestion.choices!];
+    [newChoices[index - 1], newChoices[index]] = [newChoices[index], newChoices[index - 1]];
+    
+    // order_numを更新
+    newChoices.forEach((choice, i) => {
+      choice.order_num = i + 1;
+    });
+    
+    setEditingQuestion({
+      ...editingQuestion,
+      choices: newChoices
+    });
+  };
+
+  // 並び替えの選択肢を下に移動
+  const handleMoveChoiceDown = (index: number) => {
+    if (!editingQuestion || index === editingQuestion.choices!.length - 1) return;
+    
+    const newChoices = [...editingQuestion.choices!];
+    [newChoices[index], newChoices[index + 1]] = [newChoices[index + 1], newChoices[index]];
+    
+    // order_numを更新
+    newChoices.forEach((choice, i) => {
+      choice.order_num = i + 1;
+    });
+    
+    setEditingQuestion({
+      ...editingQuestion,
+      choices: newChoices
+    });
+  };
+
   return (
     <div className="min-h-screen bg-[#FDF6E3] p-8">
       <div className="max-w-6xl mx-auto">
@@ -340,10 +376,7 @@ export default function QuestionEditorAllFormats() {
             <h2 className="text-xl font-bold text-[#2C3E50] mb-3">📋 問題形式でフィルタ</h2>
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => {
-                  console.log('🔘 フィルタクリック: 全て');
-                  setFilterFormat(null);
-                }}
+                onClick={() => setFilterFormat(null)}
                 className={`px-4 py-2 rounded-lg font-bold transition-colors ${
                   filterFormat === null
                     ? 'bg-[#9B59B6] text-white'
@@ -355,10 +388,7 @@ export default function QuestionEditorAllFormats() {
               {(Object.keys(FORMAT_LABELS) as QuestionFormat[]).map(format => (
                 <button
                   key={format}
-                  onClick={() => {
-                    console.log('🔘 フィルタクリック:', format);
-                    setFilterFormat(format);
-                  }}
+                  onClick={() => setFilterFormat(format)}
                   className={`px-4 py-2 rounded-lg font-bold transition-colors ${
                     filterFormat === format
                       ? 'bg-[#9B59B6] text-white'
@@ -422,7 +452,7 @@ export default function QuestionEditorAllFormats() {
                     
                     {/* 形式別の情報表示 */}
                     {question.question_format === 'free_text' && (
-                      <div className="text-sm text-gray-600 mt-2">
+                      <div className="text-sm text-gray-700 mt-2">
                         {(() => {
                           const freeTextConfig = getFreeTextConfig(question.format_config);
                           if (freeTextConfig?.correct_answers) {
@@ -434,7 +464,7 @@ export default function QuestionEditorAllFormats() {
                     )}
                     
                     {question.question_format === 'numeric' && (
-                      <div className="text-sm text-gray-600 mt-2">
+                      <div className="text-sm text-gray-700 mt-2">
                         {(() => {
                           const numericConfig = getNumericConfig(question.format_config);
                           if (numericConfig?.correct_answer !== undefined) {
@@ -585,7 +615,7 @@ export default function QuestionEditorAllFormats() {
                                 type="text"
                                 value={answer}
                                 onChange={(e) => handleChangeFreeTextAnswer(index, e.target.value)}
-                                className="flex-1 p-2 border-2 border-gray-300 rounded"
+                                className="flex-1 p-2 border-2 border-gray-300 rounded text-gray-900"
                                 placeholder={`正解パターン${index + 1}`}
                               />
                               {correctAnswers.length > 1 && (
@@ -690,7 +720,7 @@ export default function QuestionEditorAllFormats() {
                               choices: newChoices
                             });
                           }}
-                          className="flex-1 p-2 border-2 border-gray-300 rounded"
+                          className="flex-1 p-2 border-2 border-gray-300 rounded text-gray-900 font-medium"
                         />
                         <span className={`px-2 py-1 rounded text-sm font-bold ${
                           choice.is_correct 
@@ -702,6 +732,62 @@ export default function QuestionEditorAllFormats() {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* 並び替え問題の選択肢編集 */}
+              {editingQuestion.question_format === 'ordering' && 
+               editingQuestion.choices && (
+                <div className="mb-4">
+                  <label className="block text-[#2C3E50] font-bold mb-2">
+                    🔀 選択肢（正しい順序）
+                  </label>
+                  <div className="space-y-2">
+                    {editingQuestion.choices
+                      .sort((a, b) => a.order_num - b.order_num)
+                      .map((choice, index) => (
+                        <div key={choice.id} className="flex items-center gap-2 p-3 bg-blue-50 rounded border-2 border-blue-200">
+                          <div className="flex flex-col gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveChoiceUp(index)}
+                              disabled={index === 0}
+                              className="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-xs"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveChoiceDown(index)}
+                              disabled={index === editingQuestion.choices!.length - 1}
+                              className="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-xs"
+                            >
+                              ↓
+                            </button>
+                          </div>
+                          <span className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">
+                            {index + 1}
+                          </span>
+                          <input
+                            type="text"
+                            value={choice.choice_text}
+                            onChange={(e) => {
+                              const newChoices = [...editingQuestion.choices!];
+                              const choiceIndex = newChoices.findIndex(c => c.id === choice.id);
+                              newChoices[choiceIndex].choice_text = e.target.value;
+                              setEditingQuestion({
+                                ...editingQuestion,
+                                choices: newChoices
+                              });
+                            }}
+                            className="flex-1 p-2 border-2 border-gray-300 rounded text-gray-900 font-medium"
+                          />
+                        </div>
+                      ))}
+                  </div>
+                  <p className="text-sm text-gray-600 mt-2">
+                    💡 ↑↓ボタンで順序を変更できます。上から正しい順序になるように並べてください。
+                  </p>
                 </div>
               )}
 
